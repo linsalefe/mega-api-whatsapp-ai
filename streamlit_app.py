@@ -5,278 +5,415 @@ import json
 
 # Configuração da página
 st.set_page_config(
-    page_title="WhatsApp AI Agent - CENAT",
+    page_title="WhatsApp AI Agent - RAG System",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS customizado para melhorar a aparência
+# CSS customizado com paleta azul e branco
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    
+    /* Reset e configurações globais */
+    .main {
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Header principal */
     .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
+        padding: 2rem 0;
+        margin: -1rem -1rem 2rem -1rem;
         text-align: center;
-        margin-bottom: 2rem;
+        border-radius: 0 0 20px 20px;
+        box-shadow: 0 8px 32px rgba(30, 64, 175, 0.3);
     }
-    .feature-box {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 10px;
+    
+    .main-title {
+        color: white;
+        font-size: 3rem;
+        font-weight: 700;
+        margin: 0;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        letter-spacing: -0.02em;
+    }
+    
+    .main-subtitle {
+        color: #dbeafe;
+        font-size: 1.2rem;
+        font-weight: 400;
+        margin: 0.5rem 0 0 0;
+        opacity: 0.9;
+    }
+    
+    /* Cards e containers */
+    .metric-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(30, 64, 175, 0.1);
+        border: 1px solid #e2e8f0;
         margin: 1rem 0;
-        border-left: 4px solid #1f77b4;
+        transition: all 0.3s ease;
     }
-    .status-success {
-        color: #28a745;
-        font-weight: bold;
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(30, 64, 175, 0.15);
     }
-    .status-warning {
-        color: #ffc107;
-        font-weight: bold;
+    
+    .feature-card {
+        background: linear-gradient(135deg, white 0%, #f8fafc 100%);
+        padding: 2rem;
+        border-radius: 20px;
+        border: 2px solid #e2e8f0;
+        margin: 1rem 0;
+        text-align: center;
+        transition: all 0.3s ease;
     }
-    .status-error {
-        color: #dc3545;
-        font-weight: bold;
+    
+    .feature-card:hover {
+        border-color: #3b82f6;
+        transform: translateY(-3px);
+        box-shadow: 0 10px 40px rgba(59, 130, 246, 0.2);
+    }
+    
+    /* Títulos e textos */
+    .section-title {
+        color: #1e40af;
+        font-size: 2rem;
+        font-weight: 600;
+        margin: 2rem 0 1rem 0;
+        text-align: center;
+        position: relative;
+    }
+    
+    .section-title::after {
+        content: '';
+        position: absolute;
+        bottom: -8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 60px;
+        height: 3px;
+        background: linear-gradient(90deg, #3b82f6, #60a5fa);
+        border-radius: 2px;
+    }
+    
+    .card-title {
+        color: #1e40af;
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+    
+    .card-subtitle {
+        color: #64748b;
+        font-size: 1rem;
+        font-weight: 400;
+        line-height: 1.6;
+    }
+    
+    /* Métricas */
+    .metric-value {
+        color: #1e40af;
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 0;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    .metric-label {
+        color: #64748b;
+        font-size: 0.9rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 0.5rem;
+    }
+    
+    /* Ícones e emojis */
+    .feature-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        display: block;
+    }
+    
+    /* Sidebar customização */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #1e40af 0%, #3b82f6 100%);
+    }
+    
+    .css-1d391kg .css-1v0mbdj {
+        color: white;
+    }
+    
+    /* Botões */
+    .stButton > button {
+        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+    }
+    
+    /* Alertas e notificações */
+    .stAlert {
+        border-radius: 12px;
+        border: none;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Status indicators */
+    .status-online {
+        color: #10b981;
+        font-weight: 600;
+    }
+    
+    .status-offline {
+        color: #ef4444;
+        font-weight: 600;
+    }
+    
+    /* Responsividade */
+    @media (max-width: 768px) {
+        .main-title {
+            font-size: 2rem;
+        }
+        
+        .section-title {
+            font-size: 1.5rem;
+        }
+        
+        .feature-card {
+            padding: 1.5rem;
+        }
+    }
+    
+    /* Animações */
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .fade-in {
+        animation: fadeInUp 0.6s ease-out;
     }
 </style>
 """, unsafe_allow_html=True)
 
 def main():
     # Header principal
-    st.markdown('<h1 class="main-header">🤖 WhatsApp AI Agent - RAG System</h1>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="main-header fade-in">
+        <h1 class="main-title">🤖 WhatsApp AI Agent</h1>
+        <p class="main-subtitle">Sistema RAG Inteligente para Atendimento Automatizado</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Sidebar para navegação
     with st.sidebar:
-        st.image("https://via.placeholder.com/200x100/1f77b4/ffffff?text=AI+Agent", width=200)
-        st.markdown("### 📋 Painel de Controle")
-        
+        st.markdown("### 🎯 Navegação")
         page = st.selectbox(
             "Escolha uma seção:",
-            ["🏠 Dashboard", "📄 Gerenciar Documentos", "🔧 Configurações", "💬 Chat de Teste", "📊 Analytics"]
+            ["🏠 Dashboard", "�� Documentos", "🤖 Agente IA", "📊 Analytics", "⚙️ Configurações"]
         )
-        
-        st.markdown("---")
-        st.markdown("### 📈 Status do Sistema")
-        st.markdown('<p class="status-success">✅ Sistema Online</p>', unsafe_allow_html=True)
-        st.markdown('<p class="status-success">✅ WhatsApp Conectado</p>', unsafe_allow_html=True)
-        st.markdown('<p class="status-warning">⚠️ RAG em Configuração</p>', unsafe_allow_html=True)
-
-    # Conteúdo principal baseado na seleção
-    if page == "🏠 Dashboard":
-        show_dashboard()
-    elif page == "📄 Gerenciar Documentos":
-        show_document_manager()
-    elif page == "🔧 Configurações":
-        show_settings()
-    elif page == "💬 Chat de Teste":
-        show_chat_test()
-    elif page == "📊 Analytics":
-        show_analytics()
-
-def show_dashboard():
-    st.markdown("## �� Dashboard Principal")
     
-    # Métricas em colunas
+    # Conteúdo principal baseado na página selecionada
+    if page == "🏠 Dashboard":
+        dashboard_page()
+    elif page == "�� Documentos":
+        documents_page()
+    elif page == "🤖 Agente IA":
+        agent_page()
+    elif page == "�� Analytics":
+        analytics_page()
+    elif page == "⚙️ Configurações":
+        settings_page()
+
+def dashboard_page():
+    st.markdown('<h2 class="section-title fade-in">📊 Dashboard Principal</h2>', unsafe_allow_html=True)
+    
+    # Métricas principais
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric(
-            label="📱 Mensagens Hoje",
-            value="127",
-            delta="12"
-        )
+        st.markdown("""
+        <div class="metric-card fade-in">
+            <div class="metric-value">156</div>
+            <div class="metric-label">Conversas Hoje</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.metric(
-            label="📄 Documentos Ativos",
-            value="8",
-            delta="2"
-        )
+        st.markdown("""
+        <div class="metric-card fade-in">
+            <div class="metric-value">98.5%</div>
+            <div class="metric-label">Taxa de Sucesso</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        st.metric(
-            label="🤖 Respostas IA",
-            value="89%",
-            delta="5%"
-        )
+        st.markdown("""
+        <div class="metric-card fade-in">
+            <div class="metric-value">2.3s</div>
+            <div class="metric-label">Tempo Resposta</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col4:
-        st.metric(
-            label="⚡ Tempo Resposta",
-            value="2.3s",
-            delta="-0.5s"
-        )
+        st.markdown("""
+        <div class="metric-card fade-in">
+            <div class="metric-value status-online">●</div>
+            <div class="metric-label">Status Sistema</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    st.markdown("---")
+    # Status do sistema
+    st.markdown('<h3 class="section-title">🔧 Status do Sistema</h3>', unsafe_allow_html=True)
     
-    # Seções de funcionalidades
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
-        <div class="feature-box">
-            <h3>🚀 Funcionalidades Ativas</h3>
-            <ul>
-                <li>✅ WhatsApp Web Integration</li>
-                <li>✅ OpenAI GPT Integration</li>
-                <li>✅ Processamento de Texto</li>
-                <li>🔄 RAG System (em desenvolvimento)</li>
-                <li>🔄 Upload de Documentos</li>
-            </ul>
+        <div class="feature-card fade-in">
+            <span class="feature-icon">🟢</span>
+            <h3 class="card-title">WhatsApp API</h3>
+            <p class="card-subtitle">Conectado e funcionando perfeitamente</p>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
-        <div class="feature-box">
-            <h3>📋 Próximas Implementações</h3>
-            <ul>
-                <li>🔄 Upload de PDFs</li>
-                <li>🔄 Scraping de Sites</li>
-                <li>🔄 Base de Conhecimento</li>
-                <li>🔄 Analytics Avançados</li>
-                <li>🔄 Multi-agentes</li>
-            </ul>
+        <div class="feature-card fade-in">
+            <span class="feature-icon">🟢</span>
+            <h3 class="card-title">Sistema RAG</h3>
+            <p class="card-subtitle">Base de conhecimento atualizada</p>
         </div>
         """, unsafe_allow_html=True)
 
-def show_document_manager():
-    st.markdown("## 📄 Gerenciador de Documentos")
+def documents_page():
+    st.markdown('<h2 class="section-title fade-in">�� Gerenciamento de Documentos</h2>', unsafe_allow_html=True)
     
     # Upload de arquivos
-    st.markdown("### 📤 Upload de Documentos")
+    st.markdown("""
+    <div class="feature-card fade-in">
+        <span class="feature-icon">📤</span>
+        <h3 class="card-title">Upload de Documentos</h3>
+        <p class="card-subtitle">Adicione novos documentos à base de conhecimento</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     uploaded_files = st.file_uploader(
-        "Escolha os arquivos para treinar a IA:",
+        "Escolha os arquivos",
         type=['pdf', 'txt', 'docx'],
-        accept_multiple_files=True,
-        help="Formatos suportados: PDF, TXT, DOCX"
+        accept_multiple_files=True
     )
     
     if uploaded_files:
-        st.success(f"✅ {len(uploaded_files)} arquivo(s) carregado(s)!")
+        st.success(f"✅ {len(uploaded_files)} arquivo(s) carregado(s) com sucesso!")
         
         for file in uploaded_files:
-            with st.expander(f"📄 {file.name}"):
-                st.write(f"**Tamanho:** {file.size} bytes")
-                st.write(f"**Tipo:** {file.type}")
-                
-                if st.button(f"Processar {file.name}", key=f"process_{file.name}"):
-                    with st.spinner("Processando documento..."):
-                        # Aqui será implementado o processamento RAG
-                        st.success("✅ Documento processado e adicionado à base de conhecimento!")
-    
-    st.markdown("---")
-    
-    # URL Scraping
-    st.markdown("### 🌐 Scraping de Sites")
-    
-    url_input = st.text_input(
-        "URL do site para extrair conteúdo:",
-        placeholder="https://exemplo.com"
-    )
-    
-    if st.button("🔍 Extrair Conteúdo"):
-        if url_input:
-            with st.spinner("Extraindo conteúdo do site..."):
-                # Aqui será implementado o scraping
-                st.success("✅ Conteúdo extraído e processado!")
-        else:
-            st.error("❌ Por favor, insira uma URL válida")
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="card-title">📄 {file.name}</div>
+                <div class="card-subtitle">Tamanho: {file.size} bytes</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-def show_settings():
-    st.markdown("## 🔧 Configurações do Sistema")
+def agent_page():
+    st.markdown('<h2 class="section-title fade-in">🤖 Configuração do Agente IA</h2>', unsafe_allow_html=True)
     
-    # Configurações da IA
-    with st.expander("🤖 Configurações da IA", expanded=True):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        <div class="feature-card fade-in">
+            <span class="feature-icon">🎯</span>
+            <h3 class="card-title">Personalidade</h3>
+            <p class="card-subtitle">Configure o tom e estilo do agente</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        personality = st.selectbox(
+            "Escolha a personalidade:",
+            ["Profissional", "Amigável", "Técnico", "Casual"]
+        )
+    
+    with col2:
+        st.markdown("""
+        <div class="feature-card fade-in">
+            <span class="feature-icon">⚡</span>
+            <h3 class="card-title">Modelo IA</h3>
+            <p class="card-subtitle">Selecione o modelo de linguagem</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
         model = st.selectbox(
-            "Modelo OpenAI:",
-            ["gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"]
+            "Modelo:",
+            ["GPT-4", "Claude-3", "Gemini Pro"]
         )
-        
-        temperature = st.slider(
-            "Temperatura (Criatividade):",
-            min_value=0.0,
-            max_value=2.0,
-            value=0.7,
-            step=0.1
-        )
-        
-        max_tokens = st.number_input(
-            "Máximo de Tokens:",
-            min_value=100,
-            max_value=4000,
-            value=1000
-        )
-    
-    # Configurações do WhatsApp
-    with st.expander("📱 Configurações WhatsApp"):
-        auto_reply = st.checkbox("Resposta Automática", value=True)
-        response_delay = st.slider("Delay de Resposta (segundos):", 1, 10, 3)
-        
-        st.text_area(
-            "Prompt do Sistema:",
-            value="Você é um assistente inteligente integrado ao WhatsApp...",
-            height=100
-        )
-    
-    # Salvar configurações
-    if st.button("💾 Salvar Configurações"):
-        st.success("✅ Configurações salvas com sucesso!")
 
-def show_chat_test():
-    st.markdown("## 💬 Chat de Teste")
+def analytics_page():
+    st.markdown('<h2 class="section-title fade-in">�� Analytics e Relatórios</h2>', unsafe_allow_html=True)
     
-    st.info("🧪 Use esta seção para testar as respostas da IA antes de implementar no WhatsApp")
+    # Gráficos de exemplo (placeholder)
+    col1, col2 = st.columns(2)
     
-    # Histórico de chat
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    with col1:
+        st.markdown("""
+        <div class="feature-card fade-in">
+            <span class="feature-icon">📈</span>
+            <h3 class="card-title">Conversas por Hora</h3>
+            <p class="card-subtitle">Distribuição de conversas ao longo do dia</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Exibir mensagens
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    # Input do usuário
-    if prompt := st.chat_input("Digite sua mensagem..."):
-        # Adicionar mensagem do usuário
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Resposta da IA (simulada por enquanto)
-        with st.chat_message("assistant"):
-            response = f"🤖 Resposta simulada para: '{prompt}'"
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+    with col2:
+        st.markdown("""
+        <div class="feature-card fade-in">
+            <span class="feature-icon">🎯</span>
+            <h3 class="card-title">Taxa de Resolução</h3>
+            <p class="card-subtitle">Percentual de problemas resolvidos automaticamente</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-def show_analytics():
-    st.markdown("## 📊 Analytics e Métricas")
+def settings_page():
+    st.markdown('<h2 class="section-title fade-in">⚙️ Configurações do Sistema</h2>', unsafe_allow_html=True)
     
-    # Gráficos simulados
-    import pandas as pd
-    import numpy as np
+    # Configurações da API
+    st.markdown("""
+    <div class="feature-card fade-in">
+        <span class="feature-icon">🔐</span>
+        <h3 class="card-title">Configurações da API</h3>
+        <p class="card-subtitle">Configure as chaves e tokens de acesso</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Dados simulados
-    dates = pd.date_range('2024-01-01', periods=30, freq='D')
-    messages_data = pd.DataFrame({
-        'Data': dates,
-        'Mensagens': np.random.randint(50, 200, 30),
-        'Respostas IA': np.random.randint(40, 180, 30)
-    })
-    
-    st.markdown("### 📈 Mensagens por Dia")
-    st.line_chart(messages_data.set_index('Data'))
-    
-    st.markdown("### 📊 Distribuição de Tipos de Consulta")
-    chart_data = pd.DataFrame({
-        'Tipo': ['Informações Gerais', 'Suporte Técnico', 'Vendas', 'Outros'],
-        'Quantidade': [45, 30, 15, 10]
-    })
-    st.bar_chart(chart_data.set_index('Tipo'))
+    with st.expander("🔑 Chaves de API"):
+        openai_key = st.text_input("OpenAI API Key", type="password")
+        whatsapp_token = st.text_input("WhatsApp Token", type="password")
+        
+        if st.button("💾 Salvar Configurações"):
+            st.success("✅ Configurações salvas com sucesso!")
 
 if __name__ == "__main__":
     main()
