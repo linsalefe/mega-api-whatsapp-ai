@@ -1,0 +1,33 @@
+# 🔧 Dependências do Projeto WhatsApp AI Agent
+# Cada linha é uma biblioteca que vamos usar
+
+# Framework web para criar nossa API
+flask==3.0.0
+
+# Para fazer requisições HTTP (comunicar com APIs)
+requests==2.31.0
+
+# Para trabalhar com variáveis de ambiente (.env)
+python-dotenv==1.0.0
+
+# Banco de dados SQL simples
+sqlalchemy==2.0.23
+
+# Para conectar com OpenAI (GPT)
+openai==1.6.1
+
+# Para agendamento de tarefas
+apscheduler==3.10.4
+
+# Para validação de dados
+pydantic==2.5.2
+
+# Para logs coloridos no terminal
+colorlog==6.8.0
+
+# Para testes
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Para análise e monitoramento
+prometheus-client==0.19.0
