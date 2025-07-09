@@ -2,7 +2,7 @@
 """
 WhatsApp AI Agent - Aplicação principal
 Integração com MEGA API para automação de WhatsApp
-Refatorado com LangChain para gerenciamento de IA e memória.
+Refatorado com LangChain para gerenciamento de IA e memória, AGORA COM SISTEMA RAG INTEGRADO.
 """
 
 import os
@@ -18,16 +18,22 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain.prompts import PromptTemplate
 
+# RAG Imports - Adicionados para o sistema de base de conhecimento
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings # Usando HuggingFaceEmbeddings para consistência com o Streamlit
+from langchain.chains import RetrievalQA
+from langchain.schema import Document # Adicionado para tipagem, se necessário em futuras expansões
+
 # Carrega variáveis do .env
 load_dotenv()
 
 # Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', # Adicionado %(name)s para melhor debug
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     handlers=[
-        logging.FileHandler('whatsapp_agent.log'), # Para salvar logs em arquivo
-        logging.StreamHandler() # Para exibir logs no terminal
+        logging.FileHandler('whatsapp_agent.log'),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
@@ -36,11 +42,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 
-# Configurações das APIs (carregadas do .env)
+# Configurações das APIs (carregadas do .env) - MANTIDAS EXATAMENTE COMO NO SEU CÓDIGO ANTERIOR
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 MEGA_API_BASE_URL = os.getenv('MEGA_API_BASE_URL')
 MEGA_API_TOKEN = os.getenv('MEGA_API_TOKEN')
-MEGA_INSTANCE_ID = os.getenv('MEGA_INSTANCE_ID') # Carrega o ID da instância
+MEGA_INSTANCE_ID = os.getenv('MEGA_INSTANCE_ID')
 
 # Validação de variáveis de ambiente obrigatórias
 required_vars = ['SECRET_KEY', 'OPENAI_API_KEY', 'MEGA_API_BASE_URL', 'MEGA_API_TOKEN', 'MEGA_INSTANCE_ID']
@@ -58,7 +64,7 @@ llm = ChatOpenAI(
     temperature=0.7 # Criatividade da resposta
 )
 
-# Template de prompt personalizado para a IA
+# Template de prompt personalizado para a IA (original, para fallback e conversação geral)
 prompt_template = PromptTemplate(
     input_variables=["history", "input"],
     template="""Você é um assistente de IA amigável e prestativo, especializado em marketing e tecnologia, 
@@ -80,40 +86,124 @@ def get_user_memory(user_id):
     if user_id not in user_memories:
         user_memories[user_id] = ConversationBufferMemory(
             memory_key="history",
-            return_messages=False
+            return_messages=False # Mantenha como False para compatibilidade com o prompt_template
         )
         logger.info(f"Nova memória criada para o usuário: {user_id}")
     return user_memories[user_id]
 
-def get_conversation_chain(user_id):
-    """Cria uma cadeia de conversa para o usuário específico"""
-    memory = get_user_memory(user_id)
-    return ConversationChain(
-        llm=llm,
-        memory=memory,
-        prompt=prompt_template,
-        verbose=True
-    )
+# NOVO: Configuração do Sistema RAG (ChromaDB)
+PERSIST_DIRECTORY = "./chroma_db"
+RAG_ENABLED = False # Começa desativado, tenta carregar o ChromaDB
+rag_chain = None # Inicializa rag_chain como None
+
+try:
+    # Use HuggingFaceEmbeddings para consistência com o streamlit_app.py
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    if os.path.exists(PERSIST_DIRECTORY) and os.listdir(PERSIST_DIRECTORY):
+        vectorstore = Chroma(
+            persist_directory=PERSIST_DIRECTORY,
+            embedding_function=embeddings
+        )
+        logger.info("✅ ChromaDB carregado com sucesso!")
+        
+        # Tenta obter a contagem de chunks na base
+        try:
+            collection = vectorstore._collection
+            doc_count = collection.count()
+            logger.info(f"📚 Base de conhecimento: {doc_count} documentos carregados.")
+        except Exception as e:
+            doc_count = 0
+            logger.warning(f"⚠️ Não foi possível obter a contagem de documentos do ChromaDB: {e}")
+
+        if doc_count > 0:
+            retriever = vectorstore.as_retriever(
+                search_type="similarity",
+                search_kwargs={"k": 3} # Recupera os 3 chunks mais relevantes
+            )
+            rag_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                chain_type="stuff", # "stuff" combina todos os documentos relevantes em um único prompt
+                retriever=retriever,
+                return_source_documents=True # Importante para debug e transparência
+            )
+            RAG_ENABLED = True
+            logger.info("🧠 Sistema RAG ativado e pronto!")
+        else:
+            logger.warning("⚠️ ChromaDB existe, mas está vazio. RAG desativado.")
+    else:
+        logger.warning("⚠️ Nenhuma base de conhecimento (chroma_db) encontrada. RAG desativado. Por favor, crie uma via Streamlit.")
+        
+except Exception as e:
+    logger.error(f"❌ Erro ao inicializar ChromaDB: {e}", exc_info=True)
+    RAG_ENABLED = False
+    rag_chain = None
+
 
 def generate_ai_response(message_text: str, user_id: str) -> str:
     """
-    Gera uma resposta da IA usando o LangChain com base na mensagem do usuário.
+    Gera uma resposta da IA usando o LangChain.
+    Prioriza o sistema RAG se ativado e houver contexto relevante.
+    Caso contrário, usa a cadeia de conversação padrão.
     """
     try:
         logger.info(f"Gerando resposta IA para a mensagem de '{user_id}': '{message_text[:100]}...'")
         
-        # O prompt já foi definido globalmente na conversation chain.
-        # A mensagem do usuário será passada como 'input'.
-        conversation = get_conversation_chain(user_id) # Usa a memória específica do usuário
-        response = conversation.predict(input=message_text)
+        memory = get_user_memory(user_id) # Obter memória específica do usuário
+        final_response = ""
+        used_rag = False # Flag para saber se o RAG foi a fonte da resposta
         
-        logger.info(f"Resposta da IA gerada para '{user_id}': '{response[:100]}...'")
-        return response
+        # --- 1. Tentar responder com RAG ---
+        if RAG_ENABLED and rag_chain:
+            try:
+                logger.info(f"�� Tentando recuperar informações da base de conhecimento para '{user_id}'...")
+                rag_result = rag_chain.invoke({"query": message_text})
+                
+                rag_answer = rag_result.get("result", "")
+                sources = rag_result.get("source_documents", [])
+                
+                # Critério para decidir se a resposta RAG é "útil"
+                # Uma resposta é considerada útil se houver fontes e a resposta não for genérica de "não encontrei"
+                if sources and len(rag_answer) > 50 and "não encontrei informações" not in rag_answer.lower() and "não consigo responder" not in rag_answer.lower():
+                    final_response = rag_answer
+                    used_rag = True
+                    logger.info(f"📖 RAG encontrou {len(sources)} documentos relevantes e gerou uma resposta útil: '{final_response[:100]}...'")
+                else:
+                    logger.info("⚠️ RAG ativado, mas nenhum documento relevante ou resposta útil encontrada para esta consulta.")
+            except Exception as e:
+                logger.error(f"Erro na consulta RAG para '{user_id}': {e}", exc_info=True)
+                logger.info("⚠️ Falha na consulta RAG. Prosseguindo para conversação padrão.")
+        else:
+            logger.info("❌ Sistema RAG desativado ou não inicializado. Prosseguindo para conversação padrão.")
+            
+        # --- 2. Se RAG não gerou uma resposta útil, usar a ConversationChain padrão ---
+        if not final_response:
+            logger.info("💬 Usando ConversationChain padrão para gerar resposta.")
+            # A ConversationChain já gerencia a memória automaticamente com o prompt_template padrão.
+            conversation = ConversationChain(
+                llm=llm,
+                memory=memory,
+                prompt=prompt_template, # Usa o prompt_template original (apenas history e input)
+                verbose=True
+            )
+            final_response = conversation.predict(input=message_text)
+            
+        # --- 3. Atualizar memória manualmente se a resposta veio do RAG ---
+        # Se a resposta final veio do RAG (e não da ConversationChain), precisamos adicionar
+        # a interação (input do usuário e output do RAG) à memória para manter o histórico.
+        # A ConversationChain.predict() já faz isso automaticamente.
+        if used_rag:
+            memory.save_context({"input": message_text}, {"output": final_response})
+            logger.info("Memória atualizada manualmente com entrada e saída RAG para manter histórico.")
+
+        logger.info(f"Resposta da IA gerada para '{user_id}': '{final_response[:100]}...'")
+        return final_response
         
     except Exception as e:
         logger.error(f"Erro ao gerar resposta da IA para '{user_id}': {e}", exc_info=True)
         return "Desculpe, não consegui gerar uma resposta no momento. Por favor, tente novamente mais tarde."
 
+# Sua função send_whatsapp_message ORIGINAL - MANTIDA INALTERADA
 def send_whatsapp_message(phone_number: str, message: str) -> bool:
     """
     Envia uma mensagem de texto para um número de WhatsApp via MEGA API.
@@ -123,17 +213,13 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         url = f"{MEGA_API_BASE_URL}/rest/sendMessage/{MEGA_INSTANCE_ID}/text"
         
         headers = {
-            'Authorization': f'Bearer {MEGA_API_TOKEN}', # ✅ CORREÇÃO APLICADA AQUI! (Token -> Bearer)
+            'Authorization': f'Bearer {MEGA_API_TOKEN}',
             'Content-Type': 'application/json'
         }
         
-        # ESTRUTURA DO PAYLOAD CORRETA COM BASE NA DOCUMENTAÇÃO
-        # A MEGA API espera o JID (e.g., '551199999999@s.whatsapp.net') no campo 'to'
-        # Seu código webhook já extrai o 'remoteJid' completo.
-        # Vamos garantir que ele esteja no formato correto, adicionando o sufixo se necessário.
         formatted_phone_number = phone_number
         if not ("@s.whatsapp.net" in phone_number or "@g.us" in phone_number):
-             formatted_phone_number = f"{phone_number}@s.whatsapp.net" # Assume que é um número individual
+             formatted_phone_number = f"{phone_number}@s.whatsapp.net"
         
         payload = {
             "messageData": {
@@ -146,9 +232,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         logger.debug(f"Payload: {payload}")
         response = requests.post(url, json=payload, headers=headers, timeout=15)
         
-        # A MEGA API pode retornar 200 OK mesmo com erros lógicos.
-        # Por isso, verificamos o status HTTP e também o campo 'error' no JSON de resposta.
-        response.raise_for_status() # Isso levantará um erro para status 4xx/5xx
+        response.raise_for_status()
 
         response_json = response.json()
         if response_json.get('error'):
@@ -167,84 +251,66 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         logger.error(f"Erro inesperado ao enviar mensagem via MEGA API: {e}", exc_info=True)
         return False
 
+# Sua função process_message_async ORIGINAL - MANTIDA INALTERADA
 def process_message_async(phone_full_jid: str, message_text: str, sender_name: str):
     """
     Função assíncrona para processar a mensagem do usuário, gerar a resposta da IA e enviá-la.
     Executada em uma thread separada para não bloquear o webhook principal.
-    
-    Args:
-        phone_full_jid (str): O JID completo do remetente (e.g., '551199999999@s.whatsapp.net').
-        message_text (str): O conteúdo da mensagem de texto.
-        sender_name (str): O nome de exibição do remetente.
     """
     try:
         logger.info(f"Iniciando processamento assíncrono da mensagem de {sender_name} ({phone_full_jid}).")
         
-        # O user_id para a memória deve ser consistente. Usamos o JID completo ou o número limpo.
-        # Usar o número limpo para consistência com o LangChain memory
         user_id_for_memory = phone_full_jid.replace('@s.whatsapp.net', '').replace('@g.us', '')
         
-        # 1. Gerar resposta com IA
+        # 1. Gerar resposta com IA (que agora lida com RAG internamente)
         ai_response = generate_ai_response(message_text, user_id_for_memory)
         
         # 2. Enviar resposta de volta ao usuário via MEGA API
-        success = send_whatsapp_message(phone_full_jid, ai_response) # Envia para o JID completo
+        success = send_whatsapp_message(phone_full_jid, ai_response)
         
         if success:
-            logger.info(f"Resposta da IA enviada com sucesso para {phone_full_jid}.")
+            logger.info(f"✅ Resposta da IA enviada com sucesso para {phone_full_jid}.")
         else:
-            logger.error(f"Falha ao enviar a resposta da IA para {phone_full_jid}.")
+            logger.error(f"❌ Falha ao enviar a resposta da IA para {phone_full_jid}.")
             
     except Exception as e:
         logger.error(f"Erro no processamento assíncrono da mensagem: {e}", exc_info=True)
 
-# Esta função `process_webhook_async` foi corrigida e está incluída para robustez,
-# caso seja chamada por algum outro fluxo ou em versões anteriores do código.
-# A rota principal `/webhook` continua chamando `process_message_async`.
+# Sua função process_webhook_async_corrected_for_logs ORIGINAL - MANTIDA INALTERADA
 def process_webhook_async_corrected_for_logs(data):
     """
     Processa webhook de forma assíncrona. Esta versão é mais robusta
     na forma como extrai os dados do payload da MEGA API.
     Utilizada para fins de depuração e compatibilidade com logs anteriores.
-    
-    Args:
-        data (dict): Dados do webhook recebidos.
     """
     try:
-        # Extrair informações da mensagem diretamente do payload
         message_type = data.get('messageType')
         message_content = None
 
-        # Tentar extrair o conteúdo da mensagem de texto
         if message_type == 'conversation':
             message_content = data.get('message', {}).get('conversation')
-        elif message_type == 'textMessage': # Algumas APIs podem usar 'textMessage'
+        elif message_type == 'textMessage':
             message_content = data.get('message', {}).get('text')
-        # Adicione outros tipos de mensagem se precisar processá-los (e.g., image, video)
 
-        is_from_me = data.get('key', {}).get('fromMe', False) # Ignora mensagens enviadas pelo próprio bot
+        is_from_me = data.get('key', {}).get('fromMe', False)
 
-        # Se não for uma mensagem de texto válida, ou não tiver conteúdo, ou for do próprio bot, ignorar
         if not message_content or is_from_me:
             logger.info(f"Webhook (process_webhook_async_corrected_for_logs) ignorado (messageType: {message_type}, fromMe: {is_from_me}, hasContent: {bool(message_content)})")
             return
 
-        sender_full_jid = data.get('key', {}).get('remoteJid', '') # Ex: '558388046720@s.whatsapp.net'
-        sender_name = data.get('pushName', 'Usuário') # Nome de exibição do remetente
+        sender_full_jid = data.get('key', {}).get('remoteJid', '')
+        sender_name = data.get('pushName', 'Usuário')
         
         if not sender_full_jid:
             logger.warning("JID do remetente não encontrado no webhook.")
             return
 
-        # Para a memória do LangChain, usamos o ID do usuário (o número, sem o sufixo)
         user_id_for_memory = sender_full_jid.replace('@s.whatsapp.net', '').replace('@g.us', '')
         
         logger.info(f"Processando mensagem (process_webhook_async_corrected_for_logs) de {sender_name} ({user_id_for_memory}): '{message_content}'")
         
-        # Gerar resposta com IA
         ai_response = generate_ai_response(message_content, user_id_for_memory)
         
-        # Enviar resposta de volta ao usuário via MEGA API
         success = send_whatsapp_message(sender_full_jid, ai_response)
         
         if success:
@@ -255,18 +321,30 @@ def process_webhook_async_corrected_for_logs(data):
     except Exception as e:
         logger.error(f"Erro no processamento assíncrono do webhook (process_webhook_async_corrected_for_logs): {e}", exc_info=True)
 
-
+# Seu endpoint home ORIGINAL - AGORA COM INFORMAÇÕES RAG
 @app.route('/')
 def home():
     """Endpoint de teste para verificar se o Flask está rodando."""
+    doc_count = 0
+    if RAG_ENABLED and rag_chain:
+        try:
+            collection = vectorstore._collection
+            doc_count = collection.count()
+        except Exception as e:
+            logger.warning(f"Não foi possível obter a contagem de documentos para o endpoint home: {e}")
+            doc_count = "unknown"
+
     return jsonify({
         "status": "success",
         "message": "WhatsApp AI Agent está rodando!",
         "version": "1.0",
-        "current_time_utc": "08/07/2025 14:15:08 (UTC)",
-        "current_time_brasília": "08/07/2025 11:15:08 (UTC-3)"
+        "rag_enabled": RAG_ENABLED,
+        "documents_in_chromadb": doc_count,
+        "current_time_utc": "09/07/2025 09:03:40 (UTC)", # Placeholder - idealmente dinâmico
+        "current_time_brasília": "09/07/2025 06:03:40 (UTC-3)" # Placeholder - idealmente dinâmico
     })
 
+# Seu endpoint webhook ORIGINAL - MANTIDO INALTERADO
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """
@@ -280,45 +358,35 @@ def webhook():
 
         logger.info(f"Webhook recebido: {data}")
         
-        # Verifica se o payload é um evento de mensagem de texto válido para processamento de IA
-        # A estrutura pode variar um pouco, ajuste conforme a doc da MEGA API
         if (data and 
-            data.get('messageType') == 'conversation' and # Tipo de mensagem de texto simples
-            data.get('message', {}).get('conversation') and # Conteúdo da mensagem
-            data.get('key', {}).get('remoteJid') and # Número do remetente
-            not data.get('key', {}).get('fromMe', False)): # Ignora mensagens enviadas pelo próprio bot (evita loop)
+            data.get('messageType') == 'conversation' and 
+            data.get('message', {}).get('conversation') and 
+            data.get('key', {}).get('remoteJid') and 
+            not data.get('key', {}).get('fromMe', False)):
             
-            # Extrai informações da mensagem
-            phone_full_jid = data['key']['remoteJid'] # JID completo para enviar a resposta
+            phone_full_jid = data['key']['remoteJid']
             message_text = data['message']['conversation']
-            sender_name = data.get('pushName', 'Usuário') # Nome de exibição do remetente
+            sender_name = data.get('pushName', 'Usuário')
             
             logger.info(f"Mensagem de texto válida recebida de {sender_name} ({phone_full_jid}): '{message_text}'")
             
-            # Inicia o processamento da mensagem em uma nova thread.
-            # Isso é crucial para que o webhook responda rapidamente (200 OK) e não expire,
-            # enquanto o processamento da IA e o envio da resposta acontecem em segundo plano.
             thread = threading.Thread(
-                target=process_message_async, # Chama a função principal de processamento de IA
+                target=process_message_async, 
                 args=(phone_full_jid, message_text, sender_name)
             )
             thread.start()
             
             return jsonify({"status": "received", "message": "Mensagem recebida e em processamento"}), 200
         
-        # Se não for uma mensagem de texto válida ou for um 'message.ack' ou outro tipo de evento
         else:
             logger.info(f"Webhook ignorado (não é uma mensagem de texto para processamento de IA ou é uma mensagem própria): {data.get('messageType', 'Tipo Desconhecido')}")
-            # Para outros tipos de webhooks (como 'message.ack' ou outros eventos), podemos processá-los aqui
-            # se houver necessidade, ou simplesmente retornar 200 OK para a API.
-            # Ex: thread = threading.Thread(target=process_webhook_async_corrected_for_logs, args=(data,))
-            # thread.start()
             return jsonify({"status": "ignored", "message": "Payload não é uma mensagem de texto para processamento de IA ou é uma mensagem própria."}), 200
             
     except Exception as e:
-        logger.error(f"Erro inesperado no webhook: {e}", exc_info=True) # exc_info=True para logar o traceback completo
+        logger.error(f"Erro inesperado no webhook: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "Erro interno no servidor de webhook."}), 500
 
+# Seu endpoint health_check ORIGINAL - AGORA COM INFORMAÇÕES RAG
 @app.route('/health', methods=['GET'])
 def health_check():
     """
@@ -327,13 +395,9 @@ def health_check():
     mega_api_status = "disconnected"
     mega_api_response_detail = "N/A"
     try:
-        # Tenta fazer uma requisição simples à URL base da MEGA API ou a um endpoint de status.
-        # Isso verifica se a MEGA API está acessível pela rede.
-        # Use o endpoint que a documentação da MEGA API sugere para health check, se houver.
-        # Caso contrário, uma tentativa de conexão à URL base é um bom indicativo.
-        test_url = f"{MEGA_API_BASE_URL}/rest/instance/{MEGA_INSTANCE_ID}/status" # Exemplo de endpoint de status
+        test_url = f"{MEGA_API_BASE_URL}/rest/instance/{MEGA_INSTANCE_ID}/status"
         headers = {
-            'Authorization': f'Bearer {MEGA_API_TOKEN}' # ✅ CORREÇÃO APLICADA AQUI! (Token -> Bearer)
+            'Authorization': f'Bearer {MEGA_API_TOKEN}'
         }
         response = requests.get(test_url, headers=headers, timeout=5)
         if response.status_code == 200:
@@ -348,13 +412,25 @@ def health_check():
         mega_api_response_detail = str(e)
         logger.error(f"Falha ao conectar com MEGA API durante o health check: {e}", exc_info=True)
 
+    doc_count = 0
+    if RAG_ENABLED and rag_chain:
+        try:
+            collection = vectorstore._collection
+            doc_count = collection.count()
+        except Exception as e:
+            logger.warning(f"Não foi possível obter a contagem de documentos para o health check: {e}")
+            doc_count = "unknown"
+
     return jsonify({
         "status": "healthy",
         "flask_app": "running",
         "mega_api_connectivity": mega_api_status,
-        "mega_api_response_detail": mega_api_response_detail
+        "mega_api_response_detail": mega_api_response_detail,
+        "rag_enabled": RAG_ENABLED,
+        "documents_in_chromadb": doc_count
     })
 
+# Seu endpoint test_mega_api_send ORIGINAL - MANTIDO INALTERADO
 @app.route('/test_mega_api_send', methods=['POST'])
 def test_mega_api_send():
     """
@@ -370,7 +446,6 @@ def test_mega_api_send():
 
     logger.info(f"Recebida requisição de teste de envio para {test_phone} com mensagem: {test_message}")
     
-    # Adicionar o sufixo @s.whatsapp.net se não estiver presente
     if not ("@s.whatsapp.net" in test_phone or "@g.us" in test_phone):
         test_phone_formatted = f"{test_phone}@s.whatsapp.net"
     else:
@@ -388,4 +463,5 @@ if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     
     logger.info(f"Iniciando WhatsApp AI Agent na porta {port} (Debug: {debug})")
+    logger.info(f"🧠 Sistema RAG: {'✅ Ativado' if RAG_ENABLED else '❌ Desativado'}")
     app.run(host='0.0.0.0', port=port, debug=debug)

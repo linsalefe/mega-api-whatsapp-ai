@@ -20,6 +20,8 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+chroma_db/
+uploaded_files/
 
 # IDEs
 .idea/          # PyCharm
@@ -45,3 +47,5 @@ htmlcov/
 *.pem
 *.crt
 *.key
+
+
