@@ -9,7 +9,7 @@ import pytz
 # Langchain imports for RAG
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain_openai import ChatOpenAI
@@ -686,7 +686,7 @@ def create_new_knowledge_base(uploaded_files, persist_directory):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
         
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
         vectorstore = Chroma.from_documents(chunks, embeddings, persist_directory=persist_directory)
         
         show_notification(f"Base de conhecimento criada com {len(chunks)} chunks!", "success")

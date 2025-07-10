@@ -20,7 +20,7 @@ from langchain.prompts import PromptTemplate
 
 # RAG Imports - Adicionados para o sistema de base de conhecimento
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings # Usando HuggingFaceEmbeddings para consistência com o Streamlit
+from langchain_openai import OpenAIEmbeddings # Usando HuggingFaceEmbeddings para consistência com o Streamlit
 from langchain.chains import RetrievalQA
 from langchain.schema import Document # Adicionado para tipagem, se necessário em futuras expansões
 
@@ -98,7 +98,7 @@ rag_chain = None # Inicializa rag_chain como None
 
 try:
     # Use HuggingFaceEmbeddings para consistência com o streamlit_app.py
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
 
     if os.path.exists(PERSIST_DIRECTORY) and os.listdir(PERSIST_DIRECTORY):
         vectorstore = Chroma(
