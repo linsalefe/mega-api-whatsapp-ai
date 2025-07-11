@@ -24,38 +24,35 @@ from langchain_openai import OpenAIEmbeddings # Usando HuggingFaceEmbeddings par
 from langchain.chains import RetrievalQA
 from langchain.schema import Document # Adicionado para tipagem, se necessário em futuras expansões
 
-# Carrega variáveis do .env
-load_dotenv()
+# Configuração de variáveis de ambiente
+load_dotenv()  # Para desenvolvimento local apenas
 
-# Configuração de logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    handlers=[
-        logging.FileHandler('whatsapp_agent.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Configurações da aplicação Flask
-app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-
-# Configurações das APIs (carregadas do .env) - MANTIDAS EXATAMENTE COMO NO SEU CÓDIGO ANTERIOR
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# Variáveis obrigatórias
 MEGA_API_BASE_URL = os.getenv('MEGA_API_BASE_URL')
-MEGA_API_TOKEN = os.getenv('MEGA_API_TOKEN')
+MEGA_API_TOKEN = os.getenv('MEGA_API_TOKEN') 
 MEGA_INSTANCE_ID = os.getenv('MEGA_INSTANCE_ID')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-# Validação de variáveis de ambiente obrigatórias
-required_vars = ['SECRET_KEY', 'OPENAI_API_KEY', 'MEGA_API_BASE_URL', 'MEGA_API_TOKEN', 'MEGA_INSTANCE_ID']
-missing_vars = [var for var in required_vars if not os.getenv(var)]
+# Debug: Vamos ver o que está sendo lido
+logger.info(f"🔍 Debug - MEGA_API_BASE_URL: {MEGA_API_BASE_URL}")
+logger.info(f"🔍 Debug - MEGA_API_TOKEN: {'***' if MEGA_API_TOKEN else 'None'}")
+logger.info(f"🔍 Debug - MEGA_INSTANCE_ID: {MEGA_INSTANCE_ID}")
+logger.info(f"🔍 Debug - OPENAI_API_KEY: {'***' if OPENAI_API_KEY else 'None'}")
+
+# Validação
+required_vars = {
+    'MEGA_API_BASE_URL': MEGA_API_BASE_URL,
+    'MEGA_API_TOKEN': MEGA_API_TOKEN,
+    'MEGA_INSTANCE_ID': MEGA_INSTANCE_ID,
+    'OPENAI_API_KEY': OPENAI_API_KEY
+}
+
+missing_vars = [var for var, value in required_vars.items() if not value]
 
 if missing_vars:
     logger.error(f"Variáveis de ambiente obrigatórias não encontradas: {missing_vars}")
     logger.error("Certifique-se de que seu arquivo .env está configurado corretamente com a URL correta da MEGA API e o ID da instância.")
-    exit(1) # Sai do programa se as variáveis essenciais não estiverem configuradas
+    exit(1)
 
 # Configuração do LangChain LLM (ChatOpenAI)
 llm = ChatOpenAI(
