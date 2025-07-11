@@ -24,23 +24,43 @@ from langchain_openai import OpenAIEmbeddings # Usando HuggingFaceEmbeddings par
 from langchain.chains import RetrievalQA
 from langchain.schema import Document # Adicionado para tipagem, se necessário em futuras expansões
 
-# Configuração de variáveis de ambiente
-load_dotenv()  # Para desenvolvimento local apenas
+# Carrega variáveis do .env (apenas para desenvolvimento local)
+load_dotenv()
 
-# Variáveis obrigatórias
+# Configuração de logging - MOVIDO PARA CIMA PARA SER DEFINIDO PRIMEIRO
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    handlers=[
+        logging.FileHandler('whatsapp_agent.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Configurações da aplicação Flask
+app = Flask(__name__)
+
+# Variáveis obrigatórias e de configuração - AGORA INCLUINDO SECRET_KEY
+SECRET_KEY = os.getenv('SECRET_KEY')
 MEGA_API_BASE_URL = os.getenv('MEGA_API_BASE_URL')
 MEGA_API_TOKEN = os.getenv('MEGA_API_TOKEN') 
 MEGA_INSTANCE_ID = os.getenv('MEGA_INSTANCE_ID')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
+# Atribui SECRET_KEY à configuração do Flask
+app.config['SECRET_KEY'] = SECRET_KEY
+
 # Debug: Vamos ver o que está sendo lido
+logger.info(f"🔍 Debug - SECRET_KEY: {'***' if SECRET_KEY else 'None'}") # Adicionado para debug
 logger.info(f"🔍 Debug - MEGA_API_BASE_URL: {MEGA_API_BASE_URL}")
 logger.info(f"🔍 Debug - MEGA_API_TOKEN: {'***' if MEGA_API_TOKEN else 'None'}")
 logger.info(f"🔍 Debug - MEGA_INSTANCE_ID: {MEGA_INSTANCE_ID}")
 logger.info(f"🔍 Debug - OPENAI_API_KEY: {'***' if OPENAI_API_KEY else 'None'}")
 
-# Validação
+# Validação (agora inclui SECRET_KEY)
 required_vars = {
+    'SECRET_KEY': SECRET_KEY,
     'MEGA_API_BASE_URL': MEGA_API_BASE_URL,
     'MEGA_API_TOKEN': MEGA_API_TOKEN,
     'MEGA_INSTANCE_ID': MEGA_INSTANCE_ID,
@@ -51,8 +71,19 @@ missing_vars = [var for var, value in required_vars.items() if not value]
 
 if missing_vars:
     logger.error(f"Variáveis de ambiente obrigatórias não encontradas: {missing_vars}")
-    logger.error("Certifique-se de que seu arquivo .env está configurado corretamente com a URL correta da MEGA API e o ID da instância.")
+    logger.error("Certifique-se de que todas as variáveis essenciais estão configuradas.") # Mensagem mais genérica
     exit(1)
+
+# O restante do seu código permanece igual a partir daqui
+# ...
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5000))
+    debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    logger.info(f"Iniciando WhatsApp AI Agent na porta {port} (Debug: {debug})")
+    logger.info(f"🧠 Sistema RAG: {'✅ Ativado' if RAG_ENABLED else '❌ Desativado'}")
+    app.run(host='0.0.0.0', port=port, debug=debug)
 
 # Configuração do LangChain LLM (ChatOpenAI)
 llm = ChatOpenAI(
