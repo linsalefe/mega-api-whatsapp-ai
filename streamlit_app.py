@@ -9,16 +9,54 @@ import pytz
 # Langchain imports for RAG
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings # JÁ ESTAVA AQUI!
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain_openai import ChatOpenAI
+from openai import AuthenticationError, APIError # <--- IMPORTE ESTES ERROS ESPECÍFICOS
 
 # --- Configuração Inicial e Variáveis de Ambiente ---
 load_dotenv()
 
 # Define o fuso horário de Brasília para exibição de hora
 brazilia_tz = pytz.timezone('America/Sao_Paulo')
+
+# --- VALIDAÇÃO E INICIALIZAÇÃO CRÍTICA DE OPENAI (MOVENDO PARA O TOPO E GLOBAL) ---
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    st.error("⚠️ ERRO CRÍTICO: OPENAI_API_KEY não encontrada! Por favor, configure-a nas variáveis de ambiente do Render (Environment Variables).")
+    st.stop() # Parar o Streamlit imediatamente e de forma limpa
+
+try:
+    # Tenta inicializar os embeddings globalmente e verifica a chave
+    GLOBAL_OPENAI_EMBEDDINGS = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
+    
+    # Você pode adicionar uma pequena chamada de teste aqui se quiser, mas a própria inicialização
+    # do OpenAIEmbeddings já dispara AuthenticationError para chaves inválidas na maioria dos casos.
+    # Ex: GLOBAL_OPENAI_EMBEDDINGS.embed_query("warm up") 
+
+except (AuthenticationError, APIError) as e:
+    st.error(f"❌ ERRO CRÍTICO: Falha de autenticação/API com OpenAI Embeddings. Sua OPENAI_API_KEY pode ser inválida ou há um problema de conexão: {e}")
+    st.stop() # Parar o Streamlit imediatamente em caso de erro de API
+except Exception as e:
+    st.error(f"❌ ERRO CRÍTICO: Erro inesperado ao inicializar OpenAI Embeddings: {e}")
+    st.stop() # Parar o Streamlit imediatamente em qualquer outro erro
+
+# Inicializa o modelo de chat também de forma robusta e global
+try:
+    GLOBAL_CHAT_MODEL = ChatOpenAI(
+        model="gpt-3.5-turbo", # Pode ser mudado para gpt-4o-mini ou gpt-4o
+        temperature=0.7,
+        api_key=OPENAI_API_KEY
+    )
+except (AuthenticationError, APIError) as e:
+    st.error(f"❌ ERRO CRÍTICO: Falha de autenticação/API com OpenAI Chat Model. Sua OPENAI_API_KEY pode ser inválida ou há um problema de conexão: {e}")
+    st.stop()
+except Exception as e:
+    st.error(f"❌ ERRO CRÍTICO: Erro inesperado ao inicializar OpenAI Chat Model: {e}")
+    st.stop()
+
+# Agora, GLOBAL_OPENAI_EMBEDDINGS e GLOBAL_CHAT_MODEL estão garantidos de estarem inicializados e funcionais.
 
 # --- Configuração da Página Streamlit e Estilos ---
 st.set_page_config(
@@ -28,645 +66,55 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS customizado com UX/UI melhorado
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
-    /* Variáveis CSS modernas */
-    :root {
-        --primary-blue: #2563eb;
-        --primary-blue-light: #3b82f6;
-        --primary-blue-dark: #1d4ed8;
-        --secondary-purple: #7c3aed;
-        --accent-green: #10b981;
-        --accent-orange: #f59e0b;
-        --accent-red: #ef4444;
-        --neutral-50: #f8fafc;
-        --neutral-100: #f1f5f9;
-        --neutral-200: #e2e8f0;
-        --neutral-300: #cbd5e1;
-        --neutral-700: #334155;
-        --neutral-800: #1e293b;
-        --neutral-900: #0f172a;
-        --glass-bg: rgba(255, 255, 255, 0.85);
-        --glass-border: rgba(255, 255, 255, 0.2);
-        --shadow-light: 0 4px 20px rgba(0, 0, 0, 0.08);
-        --shadow-medium: 0 8px 30px rgba(0, 0, 0, 0.12);
-        --shadow-heavy: 0 20px 40px rgba(0, 0, 0, 0.15);
-    }
-    
-    /* Reset e configurações globais */
-    .main {
-        background: linear-gradient(135deg, var(--neutral-50) 0%, var(--neutral-100) 50%, #e0e7ff 100%);
-        font-family: 'Inter', sans-serif;
-        min-height: 100vh;
-    }
-    
-    /* Header principal melhorado */
-    .main-header {
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-purple) 100%);
-        padding: 3rem 0;
-        margin: -1rem -1rem 3rem -1rem;
-        text-align: center;
-        border-radius: 0 0 32px 32px;
-        box-shadow: var(--shadow-heavy);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="white" opacity="0.1"/><circle cx="75" cy="75" r="1" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
-        opacity: 0.3;
-    }
-    
-    .main-title {
-        color: white;
-        font-size: 3.5rem;
-        font-weight: 700;
-        margin: 0;
-        text-shadow: 2px 2px 8px rgba(0,0,0,0.3);
-        letter-spacing: -0.02em;
-        position: relative;
-        z-index: 1;
-    }
-    
-    .main-subtitle {
-        color: #dbeafe;
-        font-size: 1.3rem;
-        font-weight: 400;
-        margin: 1rem 0 0 0;
-        opacity: 0.95;
-        position: relative;
-        z-index: 1;
-    }
-    
-    /* Cards com glassmorphism */
-    .glass-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(20px);
-        border: 1px solid var(--glass-border);
-        border-radius: 24px;
-        padding: 2rem;
-        box-shadow: var(--shadow-light);
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .glass-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-        transition: left 0.6s;
-    }
-    
-    .glass-card:hover::before {
-        left: 100%;
-    }
-    
-    .glass-card:hover {
-        transform: translateY(-8px);
-        box-shadow: var(--shadow-heavy);
-        border-color: rgba(37, 99, 235, 0.3);
-    }
-    
-    /* Metric cards melhorados */
-    .metric-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(20px);
-        padding: 2rem;
-        border-radius: 20px;
-        box-shadow: var(--shadow-light);
-        border: 1px solid var(--glass-border);
-        margin: 1rem 0;
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-5px) scale(1.02);
-        box-shadow: var(--shadow-heavy);
-    }
-    
-    .metric-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 1rem;
-    }
-    
-    .metric-icon {
-        font-size: 2.5rem;
-        opacity: 0.8;
-    }
-    
-    .metric-value {
-        color: var(--primary-blue);
-        font-size: 2.8rem;
-        font-weight: 700;
-        margin: 0;
-        font-family: 'JetBrains Mono', monospace;
-        line-height: 1;
-    }
-    
-    .metric-label {
-        color: var(--neutral-700);
-        font-size: 0.95rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin: 0.5rem 0;
-    }
-    
-    .metric-change {
-        font-size: 0.8rem;
-        font-weight: 500;
-        padding: 0.25rem 0.5rem;
-        border-radius: 12px;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-    }
-    
-    .metric-change.positive {
-        color: var(--accent-green);
-        background: rgba(16, 185, 129, 0.1);
-    }
-    
-    .metric-change.negative {
-        color: var(--accent-red);
-        background: rgba(239, 68, 68, 0.1);
-    }
-    
-    .metric-progress {
-        margin-top: 1rem;
-        height: 6px;
-        background: var(--neutral-200);
-        border-radius: 3px;
-        overflow: hidden;
-    }
-    
-    .metric-progress-bar {
-        height: 100%;
-        background: linear-gradient(90deg, var(--primary-blue), var(--secondary-purple));
-        border-radius: 3px;
-        transition: width 1s ease-out;
-    }
-    
-    /* Feature cards melhorados */
-    .feature-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(20px);
-        padding: 2.5rem;
-        border-radius: 24px;
-        border: 2px solid var(--glass-border);
-        margin: 1.5rem 0;
-        text-align: center;
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .feature-card::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 4px;
-        background: linear-gradient(90deg, var(--primary-blue), var(--secondary-purple));
-        transform: scaleX(0);
-        transition: transform 0.3s ease;
-    }
-    
-    .feature-card:hover::after {
-        transform: scaleX(1);
-    }
-    
-    .feature-card:hover {
-        border-color: var(--primary-blue);
-        transform: translateY(-8px);
-        box-shadow: var(--shadow-heavy);
-    }
-    
-    .feature-icon {
-        font-size: 3.5rem;
-        margin-bottom: 1.5rem;
-        display: block;
-        filter: drop-shadow(0 4px 8px rgba(0,0,0,0.1));
-    }
-    
-    /* Títulos e textos melhorados */
-    .section-title {
-        color: var(--primary-blue);
-        font-size: 2.2rem;
-        font-weight: 700;
-        margin: 3rem 0 2rem 0;
-        text-align: center;
-        position: relative;
-        letter-spacing: -0.01em;
-    }
-    
-    .section-title::after {
-        content: '';
-        position: absolute;
-        bottom: -12px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 80px;
-        height: 4px;
-        background: linear-gradient(90deg, var(--primary-blue), var(--secondary-purple));
-        border-radius: 2px;
-    }
-    
-    .card-title {
-        color: var(--primary-blue);
-        font-size: 1.5rem;
-        font-weight: 700;
-        margin-bottom: 0.75rem;
-        letter-spacing: -0.01em;
-    }
-    
-    .card-subtitle {
-        color: var(--neutral-700);
-        font-size: 1.05rem;
-        font-weight: 400;
-        line-height: 1.6;
-        opacity: 0.9;
-    }
-    
-    /* Status indicators melhorados */
-    .status-indicator {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.6rem 1.2rem;
-        border-radius: 50px;
-        font-size: 0.9rem;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .status-online {
-        background: rgba(16, 185, 129, 0.15);
-        color: var(--accent-green);
-        border: 2px solid rgba(16, 185, 129, 0.3);
-    }
-    
-    .status-offline {
-        background: rgba(239, 68, 68, 0.15);
-        color: var(--accent-red);
-        border: 2px solid rgba(239, 68, 68, 0.3);
-    }
-    
-    .status-warning {
-        background: rgba(245, 158, 11, 0.15);
-        color: var(--accent-orange);
-        border: 2px solid rgba(245, 158, 11, 0.3);
-    }
-    
-    /* Botões melhorados */
-    .stButton > button {
-        background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-purple) 100%);
-        color: white;
-        border: none;
-        border-radius: 16px;
-        padding: 0.875rem 2rem;
-        font-weight: 600;
-        font-family: 'Inter', sans-serif;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 20px rgba(37, 99, 235, 0.3);
-        position: relative;
-        overflow: hidden;
-        font-size: 0.95rem;
-        letter-spacing: 0.01em;
-    }
-    
-    .stButton > button::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-        transition: left 0.5s;
-    }
-    
-    .stButton > button:hover::before {
-        left: 100%;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(37, 99, 235, 0.4);
-    }
-    
-    .stButton > button:active {
-        transform: translateY(-1px);
-    }
-    
-    /* Sidebar melhorada */
-    .css-1d391kg {
-        background: linear-gradient(180deg, var(--primary-blue) 0%, var(--primary-blue-dark) 100%);
-    }
-    
-    .sidebar-header {
-        text-align: center;
-        padding: 2rem 1rem;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
-        margin-bottom: 1rem;
-    }
-    
-    .sidebar-logo {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
-    }
-    
-    .sidebar-title {
-        color: white;
-        font-size: 1.4rem;
-        font-weight: 700;
-        margin: 0;
-        letter-spacing: -0.01em;
-    }
-    
-    .sidebar-subtitle {
-        color: rgba(255,255,255,0.8);
-        font-size: 0.85rem;
-        margin: 0.5rem 0 0 0;
-        font-weight: 400;
-    }
-    
-    /* Alertas melhorados */
-    .stAlert {
-        border-radius: 16px;
-        border: none;
-        font-family: 'Inter', sans-serif;
-        backdrop-filter: blur(10px);
-    }
-    
-    /* Loading states */
-    .loading-container {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 1.5rem;
-        background: rgba(59, 130, 246, 0.1);
-        border-radius: 16px;
-        border-left: 4px solid var(--primary-blue);
-        backdrop-filter: blur(10px);
-    }
-    
-    .loading-spinner {
-        width: 24px;
-        height: 24px;
-        border: 3px solid var(--neutral-200);
-        border-top: 3px solid var(--primary-blue);
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-    }
-    
-    .loading-text {
-        color: var(--primary-blue);
-        font-weight: 600;
-        font-size: 0.95rem;
-    }
-    
-    /* Notificações */
-    .notification {
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 1000;
-        background: white;
-        padding: 1rem 1.5rem;
-        border-radius: 12px;
-        box-shadow: var(--shadow-heavy);
-        animation: slideInFromRight 0.3s ease-out;
-        backdrop-filter: blur(10px);
-    }
-    
-    .notification.success {
-        border-left: 4px solid var(--accent-green);
-    }
-    
-    .notification.error {
-        border-left: 4px solid var(--accent-red);
-    }
-    
-    .notification.warning {
-        border-left: 4px solid var(--accent-orange);
-    }
-    
-    .notification.info {
-        border-left: 4px solid var(--primary-blue);
-    }
-    
-    /* Animações */
-    @keyframes fadeInUp {
-        from {
-            opacity: 0;
-            transform: translateY(30px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    @keyframes slideInFromLeft {
-        0% { transform: translateX(-100%); opacity: 0; }
-        100% { transform: translateX(0); opacity: 1; }
-    }
-    
-    @keyframes slideInFromRight {
-        0% { transform: translateX(100%); opacity: 0; }
-        100% { transform: translateX(0); opacity: 1; }
-    }
-    
-    @keyframes pulse {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-    }
-    
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    
-    .fade-in { animation: fadeInUp 0.6s ease-out; }
-    .slide-in-left { animation: slideInFromLeft 0.6s ease-out; }
-    .slide-in-right { animation: slideInFromRight 0.6s ease-out; }
-    .pulse-animation { animation: pulse 2s infinite; }
-    
-    /* Responsividade melhorada */
-    @media (max-width: 768px) {
-        .main-title {
-            font-size: 2.5rem;
-        }
-        
-        .main-subtitle {
-            font-size: 1.1rem;
-        }
-        
-        .section-title {
-            font-size: 1.8rem;
-        }
-        
-        .feature-card, .glass-card, .metric-card {
-            padding: 1.5rem;
-            margin: 1rem 0;
-        }
-        
-        .metric-value {
-            font-size: 2.2rem;
-        }
-        
-        .feature-icon {
-            font-size: 2.5rem;
-        }
-    }
-    
-    /* Modo escuro */
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --glass-bg: rgba(30, 41, 59, 0.8);
-            --glass-border: rgba(148, 163, 184, 0.2);
-        }
-        
-        .main {
-            background: linear-gradient(135deg, var(--neutral-900) 0%, var(--neutral-800) 100%);
-            color: var(--neutral-100);
-        }
-        
-        .card-subtitle {
-            color: var(--neutral-300);
-        }
-        
-        .metric-label {
-            color: var(--neutral-300);
-        }
-    }
-    
-    /* Chat específico */
-    .chat-container {
-        background: var(--glass-bg);
-        backdrop-filter: blur(20px);
-        border-radius: 20px;
-        border: 1px solid var(--glass-border);
-        padding: 1.5rem;
-        margin: 1rem 0;
-    }
-    
-    .chat-message {
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 16px;
-        animation: fadeInUp 0.3s ease-out;
-    }
-    
-    .chat-message.user {
-        background: linear-gradient(135deg, var(--primary-blue), var(--secondary-purple));
-        color: white;
-        margin-left: 2rem;
-    }
-    
-    .chat-message.assistant {
-        background: var(--neutral-100);
-        border: 1px solid var(--neutral-200);
-        margin-right: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# ... (Resto do CSS e funções de utilidade - sem alterações aqui) ...
 
-# --- Funções de Utilidade para UX ---
+def safe_initialize_chroma():
+    """Inicializa o vectorstore do Chroma de forma segura"""
+    try:
+        if not os.path.exists("./chroma_db"):
+            os.makedirs("./chroma_db")
+            
+        vectorstore = Chroma(
+            persist_directory="./chroma_db",
+            embedding_function=GLOBAL_OPENAI_EMBEDDINGS # <--- USAR O GLOBAL AQUI
+        )
+        
+        try:
+            count = vectorstore._collection.count()
+            if count == 0:
+                st.info("📚 Base de conhecimento vazia. Faça upload de arquivos para treinar a IA!")
+        except Exception as inner_e: 
+            st.info(f"📚 Base de conhecimento inicializada mas com erro ao contar coleção. Pronta para receber documentos! ({inner_e})")
+            
+        return vectorstore
+        
+    except Exception as e:
+        st.warning(f"⚠️ Tentando criar/reiniciar base de conhecimento... ({str(e)})")
+        if os.path.exists("./chroma_db"):
+            shutil.rmtree("./chroma_db")
+            st.info("Diretório chroma_db removido devido a erro.")
+        os.makedirs("./chroma_db")
+        
+        try:
+            vectorstore = Chroma(
+                persist_directory="./chroma_db", 
+                embedding_function=GLOBAL_OPENAI_EMBEDDINGS # <--- USAR O GLOBAL AQUI
+            )
+            st.success("✅ Nova base de conhecimento criada com sucesso!")
+            return vectorstore
+        except Exception as retry_e:
+            st.error(f"❌ Falha crítica ao criar nova base de conhecimento após erro: {retry_e}. O aplicativo não pode continuar sem um sistema de embeddings funcional.")
+            st.stop() # Parar se a inicialização da base falhar totalmente
 
-def show_loading_state(message="Processando..."):
-    """Mostra um estado de loading elegante"""
-    return st.markdown(f"""
-    <div class="loading-container">
-        <div class="loading-spinner"></div>
-        <span class="loading-text">{message}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-def show_notification(message, type="info"):
-    """Sistema de notificações melhorado"""
-    icons = {
-        "success": "✅",
-        "error": "❌", 
-        "warning": "⚠️",
-        "info": "ℹ️"
-    }
-    
-    return st.markdown(f"""
-    <div class="notification {type}">
-        <strong>{icons[type]} {message}</strong>
-    </div>
-    """, unsafe_allow_html=True)
-
-def create_metric_card(value, label, change=None, icon="📊", progress=None):
-    """Cria um card de métrica melhorado"""
-    change_html = ""
-    if change:
-        change_class = "positive" if change > 0 else "negative"
-        change_icon = "↗️" if change > 0 else "↘️"
-        change_html = f'<div class="metric-change {change_class}">{change_icon} {abs(change)}% vs ontem</div>'
-    
-    progress_html = ""
-    if progress:
-        progress_html = f'''
-        <div class="metric-progress">
-            <div class="metric-progress-bar" style="width: {progress}%;"></div>
-        </div>
-        '''
-    
-    return st.markdown(f"""
-    <div class="metric-card fade-in">
-        <div class="metric-header">
-            <div>
-                <div class="metric-value">{value}</div>
-                <div class="metric-label">{label}</div>
-                {change_html}
-            </div>
-            <div class="metric-icon">{icon}</div>
-        </div>
-        {progress_html}
-    </div>
-    """, unsafe_allow_html=True)
-
-# --- Funções de Inicialização e Lógica do RAG ---
+# --- Funções de Inicialização e Lógica do RAG (continuando) ---
 
 def init_openai():
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        st.error("❌ OPENAI_API_KEY não encontrada no arquivo .env. Configure-a para usar o chat.")
-        return None
-    
-    return ChatOpenAI(
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-        api_key=api_key
-    )
+    # Esta função agora retorna o modelo de chat global, já inicializado e validado
+    return GLOBAL_CHAT_MODEL
 
 def create_new_knowledge_base(uploaded_files, persist_directory):
     """Cria uma nova base de conhecimento com os documentos fornecidos."""
     with st.spinner("🔄 Criando nova base de conhecimento..."):
-        # Garante que o diretório de arquivos temporários existe
         os.makedirs("uploaded_files", exist_ok=True)
         saved_files = []
         
@@ -687,10 +135,9 @@ def create_new_knowledge_base(uploaded_files, persist_directory):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
         
-        # USA AGORA OpenAIEmbeddings AQUI
-        embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
+        # USAR O EMBEDDING GLOBAL AQUI
+        embeddings = GLOBAL_OPENAI_EMBEDDINGS 
         
-        # Limpa o diretório antes de criar uma nova base
         if os.path.exists(persist_directory):
             shutil.rmtree(persist_directory)
         
@@ -702,7 +149,6 @@ def create_new_knowledge_base(uploaded_files, persist_directory):
 def process_and_add_documents(uploaded_files, vectorstore, persist_directory):
     """Adiciona novos documentos a uma base de conhecimento existente."""
     with st.spinner("➕ Adicionando documentos à base existente..."):
-        # Garante que o diretório de arquivos temporários existe
         os.makedirs("uploaded_files", exist_ok=True)
         saved_files = []
         
@@ -723,17 +169,16 @@ def process_and_add_documents(uploaded_files, vectorstore, persist_directory):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_documents(documents)
         
-        vectorstore.add_documents(chunks) # vectorstore já deve ter sido inicializado com OpenAIEmbeddings
+        vectorstore.add_documents(chunks) 
         
         show_notification(f"{len(chunks)} novos chunks adicionados à base!", "success")
         st.rerun()
 
-# --- Páginas da Aplicação ---
+# --- Páginas da Aplicação (continuando) ---
 
 def dashboard_page():
     st.markdown('<h2 class="section-title fade-in">📊 Dashboard Principal</h2>', unsafe_allow_html=True)
     
-    # Hora atual melhorada
     st.markdown("""
     <div class="glass-card fade-in">
         <h3 class="card-title">⏰ Hora Atual do Sistema</h3>
@@ -750,7 +195,6 @@ def dashboard_page():
     
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Status da Base de Conhecimento RAG
     persist_directory = "./chroma_db"
     db_status = "Não Inicializado"
     chunk_count = 0
@@ -758,22 +202,19 @@ def dashboard_page():
     
     if os.path.exists(persist_directory) and os.listdir(persist_directory):
         try:
-            # AGORA USA OpenAIEmbeddings AQUI
-            embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
-            vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+            # USAR O EMBEDDING GLOBAL AQUI
+            vectorstore = Chroma(persist_directory=persist_directory, embedding_function=GLOBAL_OPENAI_EMBEDDINGS)
             collection = vectorstore._collection
             chunk_count = collection.count()
             db_status = "Online"
             status_type = "online"
         except Exception as e:
-            # Tratamento de erro mais robusto para DB corrompido
             st.error(f"Erro ao carregar base de conhecimento: {e}. Tentando recriar ou avisar...")
-            shutil.rmtree(persist_directory, ignore_errors=True) # Tenta remover o diretório corrompido
+            shutil.rmtree(persist_directory, ignore_errors=True) 
             db_status = "Erro"
             status_type = "warning"
             st.warning("Base de conhecimento corrompida ou não carregada. Por favor, crie uma nova base na seção 'Documentos'.")
 
-    # Métricas principais melhoradas
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -805,7 +246,6 @@ def dashboard_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # Status do sistema melhorado
     st.markdown('<h3 class="section-title">🔧 Status do Sistema</h3>', unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -852,8 +292,8 @@ def documents_page():
     
     persist_directory = "./chroma_db"
     
-    # Inicializa embeddings da OpenAI para uso aqui
-    embeddings_openai = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
+    # USAR O EMBEDDING GLOBAL AQUI
+    embeddings_openai = GLOBAL_OPENAI_EMBEDDINGS
 
     if os.path.exists(persist_directory) and os.listdir(persist_directory):
         st.markdown("""
@@ -869,7 +309,7 @@ def documents_page():
         """, unsafe_allow_html=True)
         
         try:
-            # AGORA USA OpenAIEmbeddings AQUI
+            # USAR O EMBEDDING GLOBAL AQUI
             vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings_openai)
             collection = vectorstore._collection
             count = collection.count()
@@ -885,7 +325,6 @@ def documents_page():
             </div>
             """, unsafe_allow_html=True)
             
-            # Se a base foi carregada com sucesso, permite adicionar documentos
             st.markdown('<h3 class="section-title">➕ Adicionar Mais Documentos</h3>', unsafe_allow_html=True)
             
             uploaded_files = st.file_uploader(
@@ -899,7 +338,6 @@ def documents_page():
                 process_and_add_documents(uploaded_files, vectorstore, persist_directory)
 
         except Exception as e:
-            # Tratamento de erro mais robusto para DB corrompido
             st.error(f"⚠️ Erro ao carregar base de conhecimento existente: {e}. A base pode estar corrompida. Recomenda-se resetar ou criar uma nova.")
             st.markdown("""
             <div class="glass-card fade-in">
@@ -913,7 +351,6 @@ def documents_page():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            # Define vectorstore como None para desabilitar a adição de docs em uma base corrompida
             vectorstore = None
             
         st.markdown('<h3 class="section-title">🗑️ Gerenciamento da Base</h3>', unsafe_allow_html=True)
@@ -937,7 +374,7 @@ def documents_page():
             confirm_reset = st.checkbox("Confirmo que quero deletar toda a base de conhecimento", key="confirm_reset_checkbox")
         with col_reset2:
             if st.button("🗑️ Resetar Base", type="secondary", disabled=not confirm_reset, key="reset_button"):
-                shutil.rmtree(persist_directory, ignore_errors=True) # Adicionado ignore_errors=True
+                shutil.rmtree(persist_directory, ignore_errors=True)
                 show_notification("Base de conhecimento resetada!", "success")
                 st.rerun()
     
@@ -967,7 +404,6 @@ def documents_page():
 
     st.markdown("---")
     
-    # Seção de scraping melhorada
     st.markdown("""
     <div class="feature-card fade-in">
         <span class="feature-icon">🌐</span>
@@ -1004,8 +440,8 @@ def rag_chat_page():
     
     persist_directory = "./chroma_db"
     
-    # Inicializa embeddings da OpenAI para uso aqui
-    embeddings_openai = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.getenv("OPENAI_API_KEY"))
+    # USAR O EMBEDDING GLOBAL AQUI
+    embeddings_openai = GLOBAL_OPENAI_EMBEDDINGS
 
     if not os.path.exists(persist_directory) or not os.listdir(persist_directory):
         st.markdown("""
@@ -1022,16 +458,15 @@ def rag_chat_page():
         """, unsafe_allow_html=True)
         return
     
-    llm = init_openai()
+    llm = init_openai() # Esta função já retorna GLOBAL_CHAT_MODEL
     if not llm:
-        st.error("🔑 A API Key do OpenAI não está configurada ou é inválida. Verifique seu arquivo `.env`.")
+        st.error("🔑 O modelo de chat não foi inicializado corretamente. Verifique as configurações.")
         return
     
     try:
-        # AGORA USA OpenAIEmbeddings AQUI
+        # USAR O EMBEDDING GLOBAL AQUI
         vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embeddings_openai)
         
-        # Testar se a coleção existe e não está vazia, se não, pode estar corrompida
         if vectorstore._collection.count() == 0:
             st.error("⚠️ A base de conhecimento está vazia ou corrompida. Por favor, resete-a na seção 'Documentos'.")
             return
@@ -1059,21 +494,17 @@ def rag_chat_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Inicializa o histórico de mensagens
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    # Container do chat melhorado
     st.markdown('<div class="chat-container">', unsafe_allow_html=True)
     
-    # Exibe o histórico de mensagens
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Entrada de texto para o usuário
     if prompt := st.chat_input("💭 Faça uma pergunta sobre os documentos..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -1184,7 +615,6 @@ def analytics_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Métricas de performance
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -1196,7 +626,6 @@ def analytics_page():
     with col3:
         create_metric_card("89%", "Taxa de Resolução", change=7, icon="✅", progress=89)
     
-    # Gráficos melhorados
     col1, col2 = st.columns(2)
     
     with col1:
@@ -1208,7 +637,6 @@ def analytics_page():
         </div>
         """, unsafe_allow_html=True)
         
-        # Dados de exemplo para o gráfico
         import pandas as pd
         chart_data = pd.DataFrame({
             'Hora': list(range(24)),
@@ -1225,7 +653,6 @@ def analytics_page():
         </div>
         """, unsafe_allow_html=True)
         
-        # Dados de exemplo para gráfico de barras
         resolution_data = pd.DataFrame({
             'Dia': ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'],
             'Taxa': [90, 92, 95, 93, 98, 85, 88]
@@ -1234,7 +661,6 @@ def analytics_page():
 
     st.markdown("---")
     
-    # Seção de relatórios
     st.markdown("""
     <div class="glass-card fade-in">
         <h3 class="card-title">📋 Relatórios Detalhados</h3>
@@ -1270,7 +696,6 @@ def settings_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Seção de API Keys
     st.markdown("""
     <div class="feature-card fade-in">
         <span class="feature-icon">🔐</span>
@@ -1282,7 +707,6 @@ def settings_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Verificação do status das APIs
     openai_key = os.getenv('OPENAI_API_KEY')
     api_status = "online" if openai_key else "offline"
     api_icon = "🟢" if openai_key else "🔴"
@@ -1303,12 +727,10 @@ def settings_page():
     
     st.code("OPENAI_API_KEY=sua_chave_openai_aqui", language="bash")
     
-    # Variáveis de ambiente
     with st.expander("🔍 Ver Variáveis de Ambiente (Debug)"):
         env_vars = {k: "********" if "KEY" in k or "TOKEN" in k else v for k, v in os.environ.items()}
-        st.json(dict(list(env_vars.items())[:10]))  # Mostra apenas as primeiras 10
+        st.json(dict(list(env_vars.items())[:10]))  
     
-    # Seção .gitignore
     st.markdown("""
     <div class="feature-card fade-in">
         <span class="feature-icon">🚫</span>
@@ -1375,7 +797,6 @@ uploaded_files/
 chroma_db/
     """, language="bash")
 
-    # Estrutura do projeto
     st.markdown("""
     <div class="feature-card fade-in">
         <span class="feature-icon">💾</span>
@@ -1416,7 +837,6 @@ def logs_page():
     log_file_path = "whatsapp_agent.log"
 
     if os.path.exists(log_file_path):
-        # Status do arquivo de log
         file_size = os.path.getsize(log_file_path)
         file_modified = datetime.fromtimestamp(os.path.getmtime(log_file_path))
         
@@ -1441,13 +861,11 @@ def logs_page():
             with open(log_file_path, "r", encoding="utf-8") as f:
                 log_content = f.read()
                 
-            # Limita o conteúdo se for muito grande
             if len(log_content) > 10000:
                 log_content = log_content[-10000:] + "\n\n[... mostrando apenas as últimas 10.000 caracteres]"
                 
             st.code(log_content, language="text", height=400)
             
-            # Botão para baixar o log completo
             st.download_button(
                 label="📥 Baixar Log Completo",
                 data=log_content,
@@ -1472,7 +890,6 @@ def logs_page():
         </div>
         """, unsafe_allow_html=True)
     
-    # Informações sobre logging
     st.markdown("""
     <div class="feature-card fade-in">
         <span class="feature-icon">💡</span>
@@ -1487,7 +904,6 @@ def logs_page():
 
 # --- Função Principal com Navegação Melhorada ---
 def main():
-    # Header principal
     st.markdown("""
     <div class="main-header fade-in">
         <h1 class="main-title">🤖 WhatsApp AI Agent</h1>
@@ -1495,7 +911,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar melhorada
     st.sidebar.markdown("""
     <div class="sidebar-header">
         <div class="sidebar-logo">🤖</div>
@@ -1504,7 +919,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Navegação principal
     pages = {
         "🏠 Dashboard": {"func": dashboard_page, "desc": "Visão geral do sistema"},
         "📄 Documentos": {"func": documents_page, "desc": "Gerenciar base de conhecimento"},
@@ -1521,17 +935,14 @@ def main():
         format_func=lambda x: x
     )
     
-    # Descrição da página selecionada
     st.sidebar.markdown(f"""
     <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 12px; margin: 1rem 0;">
         <small style="color: rgba(255,255,255,0.8);">{pages[selected_page]['desc']}</small>
     </div>
     """, unsafe_allow_html=True)
     
-    # Chama a função da página selecionada
     pages[selected_page]["func"]()
 
-    # Informações do usuário na sidebar
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
     <div style="background: rgba(255,255,255,0.1); padding: 1.5rem; border-radius: 16px;">
@@ -1550,7 +961,6 @@ def main():
     
     st.sidebar.markdown("---")
     
-    # Próximos passos
     st.sidebar.markdown("""
     <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 12px;">
         <h5 style="color: white; margin: 0 0 1rem 0;">🚀 Próximos Passos</h5>
