@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos personalizados para o WhatsApp AI Agent */
+@layer base {
+  body {
+    @apply bg-gray-50 font-sans;
+  }
+}
+
+@layer components {
+  .chat-bubble {
+    @apply max-w-xs lg:max-w-md px-4 py-2 rounded-lg shadow-sm;
+  }
+  
+  .chat-bubble-user {
+    @apply bg-whatsapp-green text-white ml-auto;
+  }
+  
+  .chat-bubble-bot {
+    @apply bg-white text-gray-800 mr-auto border;
+  }
+  
+  .btn-primary {
+    @apply bg-whatsapp-green hover:bg-whatsapp-dark text-white font-medium py-2 px-4 rounded-lg transition-colors;
+  }
+  
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-whatsapp-green focus:border-transparent;
+  }
+}
