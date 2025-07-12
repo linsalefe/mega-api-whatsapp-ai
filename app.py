@@ -11,18 +11,24 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import logging
 import threading
+import shutil # Importar shutil para manipulação de diretórios
+from flask_cors import CORS # <--- JÁ ESTÁ IMPORTADO, ÓTIMO!
 
 # LangChain Imports
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings # OpenAIEmbeddings precisa ser importado aqui também
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationChain
 from langchain.prompts import PromptTemplate
 
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
+from datetime import datetime, timedelta
+from functools import wraps
+
 # RAG Imports
-from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
 from langchain.chains import RetrievalQA
-from langchain.schema import Document
+from langchain.schema import Document # Mantido, caso precise explicitamente, mas pode ser removido se não usado
 
 # --- INÍCIO DAS CORREÇÕES DE ORDEM ---
 
@@ -43,6 +49,7 @@ load_dotenv() # Para desenvolvimento local (carrega do .env se existir)
 
 # 3. Inicialização do Flask App: ANTES DO USO DE app.config
 app = Flask(__name__)
+CORS(app)  #HABILITA O CORS PARA O SEU APLICATIVO FLASK
 
 # 4. Variáveis de Ambiente e SECRET_KEY: CARREGADAS ANTES DE SEREM USADAS
 SECRET_KEY = os.getenv('SECRET_KEY')
@@ -55,7 +62,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 app.config['SECRET_KEY'] = SECRET_KEY if SECRET_KEY else 'fallback-secret-key-for-development' # fallback para dev
 
 # Debug das variáveis de ambiente: AGORA logger ESTÁ DEFINIDO
-logger.info(f"🔍 Debug - SECRET_KEY: {'***' if SECRET_KEY else 'None'}")
+logger.info(f" Debug - SECRET_KEY: {'***' if SECRET_KEY else 'None'}")
 logger.info(f"🔍 Debug - MEGA_API_BASE_URL: {MEGA_API_BASE_URL}")
 logger.info(f"🔍 Debug - MEGA_API_TOKEN: {'***' if MEGA_API_TOKEN else 'None'}")
 logger.info(f"🔍 Debug - MEGA_INSTANCE_ID: {MEGA_INSTANCE_ID}")
@@ -116,34 +123,74 @@ def get_user_memory(user_id):
         logger.info(f"Nova memória criada para o usuário: {user_id}")
     return user_memories[user_id]
 
-# NOVO: Configuração do Sistema RAG (ChromaDB)
+# Variáveis globais para o sistema RAG
 PERSIST_DIRECTORY = "./chroma_db"
-RAG_ENABLED = False # Começa desativado, tenta carregar o ChromaDB
-rag_chain = None # Inicializa rag_chain como None
-vectorstore = None # Inicializa vectorstore como None para escopo global
+RAG_ENABLED = False
+rag_chain = None
+vectorstore = None
 
-try:
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
-
-    if os.path.exists(PERSIST_DIRECTORY) and os.listdir(PERSIST_DIRECTORY):
-        vectorstore = Chroma(
-            persist_directory=PERSIST_DIRECTORY,
-            embedding_function=embeddings
+def initialize_vectorstore():
+    """Inicializa o vectorstore com verificação de compatibilidade de embeddings."""
+    global RAG_ENABLED, rag_chain, vectorstore # Declarar como globais para modificar
+    
+    try:
+        # Usar o mesmo modelo de embedding do seu código principal
+        # 'text-embedding-ada-002' tem 1536 dimensões. Se seu ChromaDB foi criado com 384,
+        # ele precisa ser recriado ou o modelo precisa ser ajustado (ex: text-embedding-3-small com dimensions=384).
+        embeddings_model = OpenAIEmbeddings(
+            model="text-embedding-ada-002", # Mantendo o modelo original que você usava
+            openai_api_key=os.getenv('OPENAI_API_KEY')
         )
-        logger.info("✅ ChromaDB carregado com sucesso!")
+        
+        vectorstore_recreated = False
+        if os.path.exists(PERSIST_DIRECTORY) and os.listdir(PERSIST_DIRECTORY):
+            try:
+                logger.info("Tentando carregar ChromaDB existente...")
+                temp_vectorstore = Chroma(
+                    persist_directory=PERSIST_DIRECTORY,
+                    embedding_function=embeddings_model
+                )
+                # Forçar uma busca para verificar compatibilidade
+                # Isso pode falhar se a dimensão for incompatível
+                temp_vectorstore.similarity_search("teste", k=1) 
+                logger.info("✅ ChromaDB carregado com sucesso!")
+                vectorstore = temp_vectorstore
+            except Exception as e:
+                logger.warning(f"⚠️ ChromaDB existente é incompatível ou corrupto: {e}. Removendo e recriando.")
+                if os.path.exists(PERSIST_DIRECTORY):
+                    shutil.rmtree(PERSIST_DIRECTORY) # Remove o diretório problemático
+                vectorstore_recreated = True
+                vectorstore = Chroma(
+                    persist_directory=PERSIST_DIRECTORY,
+                    embedding_function=embeddings_model
+                )
+        else:
+            logger.warning("⚠️ Nenhuma base de conhecimento (chroma_db) encontrada. Criando nova.")
+            vectorstore_recreated = True
+            vectorstore = Chroma(
+                persist_directory=PERSIST_DIRECTORY,
+                embedding_function=embeddings_model
+            )
 
-        try:
-            collection = vectorstore._collection
-            doc_count = collection.count()
+        # Verifica e carrega documentos se a base de dados estiver vazia ou foi recriada
+        if vectorstore_recreated or (vectorstore and vectorstore._collection.count() == 0):
+            logger.info("📚 NOTA: A base de conhecimento foi recriada ou está vazia. Por favor, use a interface Streamlit para fazer o upload de documentos.")
+            # Se você tiver um método programático para carregar documentos aqui, adicione-o.
+            # Ex:
+            # from langchain_community.document_loaders import TextLoader
+            # from langchain.text_splitter import RecursiveCharacterTextSplitter
+            # loader = TextLoader("path/to/your/initial_document.txt")
+            # documents = loader.load()
+            # text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            # chunks = text_splitter.split_documents(documents)
+            # vectorstore.add_documents(chunks)
+
+        if vectorstore and vectorstore._collection.count() > 0:
+            doc_count = vectorstore._collection.count()
             logger.info(f"📚 Base de conhecimento: {doc_count} documentos carregados.")
-        except Exception as e:
-            doc_count = 0
-            logger.warning(f"⚠️ Não foi possível obter a contagem de documentos do ChromaDB: {e}")
-
-        if doc_count > 0:
             retriever = vectorstore.as_retriever(
                 search_type="similarity",
-                search_kwargs={"k": 3} # Recupera os 3 chunks mais relevantes
+                search_kwargs={"k": 3}
             )
             rag_chain = RetrievalQA.from_chain_type(
                 llm=llm,
@@ -154,18 +201,25 @@ try:
             RAG_ENABLED = True
             logger.info("🧠 Sistema RAG ativado e pronto!")
         else:
-            logger.warning("⚠️ ChromaDB existe, mas está vazio. RAG desativado.")
-    else:
-        logger.warning("⚠️ Nenhuma base de conhecimento (chroma_db) encontrada. RAG desativado. Por favor, crie uma via Streamlit.")
+            RAG_ENABLED = False
+            rag_chain = None
+            logger.warning("⚠️ ChromaDB vazio ou sem documentos. RAG desativado.")
 
-except Exception as e:
-    logger.error(f"❌ Erro ao inicializar ChromaDB: {e}", exc_info=True)
-    RAG_ENABLED = False
-    rag_chain = None
+    except Exception as e:
+        logger.error(f"❌ Erro ao inicializar ChromaDB: {e}", exc_info=True)
+        RAG_ENABLED = False
+        rag_chain = None
+    finally:
+        logger.info(f"Status final do RAG: {'Ativado' if RAG_ENABLED else 'Desativado'}")
+
+
+# NOVO: Chamada para inicializar o vectorstore globalmente
+initialize_vectorstore()
 
 # --- FIM DA CONFIGURAÇÃO DO LANGCHAIN E RAG ---
 
-# --- FUNÇÕES AUXILIARES: ORDEM MANTIDA COMO NO SEU CÓDIGO ---
+
+# --- FUNÇÕES AUXILIARES ---
 
 def generate_ai_response(message_text: str, user_id: str) -> str:
     """
@@ -181,6 +235,7 @@ def generate_ai_response(message_text: str, user_id: str) -> str:
         used_rag = False # Flag para saber se o RAG foi a fonte da resposta
 
         # --- 1. Tentar responder com RAG ---
+        # Garante que RAG_ENABLED e rag_chain estejam definidos globalmente pela initialize_vectorstore()
         if RAG_ENABLED and rag_chain:
             try:
                 logger.info(f"📖 Tentando recuperar informações da base de conhecimento para '{user_id}'...")
@@ -345,6 +400,7 @@ def process_webhook_async_corrected_for_logs(data):
     except Exception as e:
         logger.error(f"Erro no processamento assíncrono do webhook (process_webhook_async_corrected_for_logs): {e}", exc_info=True)
 
+
 # --- FIM DAS FUNÇÕES AUXILIARES ---
 
 
@@ -364,8 +420,8 @@ def home():
             doc_count = "unknown"
 
     # A data e hora devem ser geradas dinamicamente
-    import datetime
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    # datetime já está importado do topo, não precisa de 'import datetime' aqui
+    now_utc = datetime.now(datetime.timezone.utc) # Usar datetime.now() direto
     now_brt = now_utc - datetime.timedelta(hours=3) # Brasília Time is UTC-3
 
     return jsonify({
@@ -489,6 +545,167 @@ def test_mega_api_send():
     else:
         return jsonify({"status": "error", "message": f"Falha ao enviar mensagem de teste para {test_phone}"}), 500
 
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    """
+    Endpoint para chat direto com o AI agent (para testes).
+    """
+    try:
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({"status": "error", "message": "Campo 'message' é obrigatório"}), 400
+        
+        user_message = data['message']
+        logger.info(f"📩 Mensagem recebida via API: {user_message}")
+        
+        # Processa a mensagem usando a mesma lógica do webhook
+        # generate_ai_response já inclui a lógica RAG e de conversação padrão
+        response_text = generate_ai_response(user_message, "api_user")
+        
+        return jsonify({
+            "status": "success",
+            "user_message": user_message,
+            "ai_response": response_text,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Erro no endpoint /api/chat: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "Erro interno do servidor"}), 500
+users_db = {}
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+        
+        try:
+            if token.startswith('Bearer '):
+                token = token[7:]
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            current_user_id = data['user_id']
+        except:
+            return jsonify({'error': 'Token is invalid'}), 401
+        
+        return f(current_user_id, *args, **kwargs)
+    return decorated
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('email') or not data.get('password') or not data.get('name'):
+            return jsonify({'error': 'Nome, email e senha são obrigatórios'}), 400
+        
+        email = data['email']
+        password = data['password']
+        name = data['name']
+        
+        # Verificar se usuário já existe
+        if email in users_db:
+            return jsonify({'error': 'Usuário já existe'}), 400
+        
+        # Criar novo usuário
+        user_id = len(users_db) + 1
+        users_db[email] = {
+            'id': user_id,
+            'name': name,
+            'email': email,
+            'password': generate_password_hash(password)
+        }
+        
+        # Gerar token
+        token = jwt.encode({
+            'user_id': user_id,
+            'email': email,
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+        
+        return jsonify({
+            'success': True,
+            'token': token,
+            'user': {
+                'id': user_id,
+                'name': name,
+                'email': email
+            }
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Erro no registro: {str(e)}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('email') or not data.get('password'):
+            return jsonify({'error': 'Email e senha são obrigatórios'}), 400
+        
+        email = data['email']
+        password = data['password']
+        
+        # Verificar se usuário existe
+        if email not in users_db:
+            return jsonify({'error': 'Credenciais inválidas'}), 401
+        
+        user = users_db[email]
+        
+        # Verificar senha
+        if not check_password_hash(user['password'], password):
+            return jsonify({'error': 'Credenciais inválidas'}), 401
+        
+        # Gerar token
+        token = jwt.encode({
+            'user_id': user['id'],
+            'email': email,
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+        
+        return jsonify({
+            'success': True,
+            'token': token,
+            'user': {
+                'id': user['id'],
+                'name': user['name'],
+                'email': user['email']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Erro no login: {str(e)}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
+
+@app.route('/api/auth/verify', methods=['GET'])
+@token_required
+def verify_token(current_user_id):
+    try:
+        # Encontrar usuário pelo ID
+        user = None
+        for email, user_data in users_db.items():
+            if user_data['id'] == current_user_id:
+                user = user_data
+                break
+        
+        if not user:
+            return jsonify({'error': 'Usuário não encontrado'}), 404
+        
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user['id'],
+                'name': user['name'],
+                'email': user['email']
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Erro na verificação do token: {str(e)}")
+        return jsonify({'error': 'Erro interno do servidor'}), 500
 # --- FIM DAS ROTAS DA API ---
 
 # --- MAIN EXECUTION BLOCK ---
@@ -497,6 +714,5 @@ if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
 
     logger.info(f"Iniciando WhatsApp AI Agent na porta {port} (Debug: {debug})")
-    # RAG_ENABLED AGORA ESTÁ DEFINIDO GLOBALMENTE E PODE SER USADO AQUI
     logger.info(f"🧠 Sistema RAG: {'✅ Ativado' if RAG_ENABLED else '❌ Desativado'}")
     app.run(host='0.0.0.0', port=port, debug=debug)
